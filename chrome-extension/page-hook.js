@@ -3,46 +3,47 @@
     if (window.__DEVTOOLS_REDUX_HOOK_INSTALLED__) return;
     window.__DEVTOOLS_REDUX_HOOK_INSTALLED__ = true;
 
-    function patchEnhancer(originalEnhancer) {
-        if (typeof originalEnhancer !== 'function') return originalEnhancer;
-        
-        const patched = function(...args) {
-            const nextEnhancer = originalEnhancer.apply(this, args);
-            if (typeof nextEnhancer !== 'function') return nextEnhancer;
-            
-            return function(createStore) {
-                return function(reducer, preloadedState, ...rest) {
-                    const store = nextEnhancer(createStore)(reducer, preloadedState, ...rest);
-                    // CAPTURE THE REDUX STORE INSTANCE SUCCESSFULLY!
-                    window.__captured_redux_store__ = store;
-                    return store;
-                };
-            };
-        };
-        Object.assign(patched, originalEnhancer);
-        return patched;
+    function isStore(obj) {
+        return obj && typeof obj === 'object' && typeof obj.getState === 'function' && typeof obj.dispatch === 'function';
     }
+
+    const handler = {
+        apply: function (target, thisArg, argumentsList) {
+            const result = Reflect.apply(target, thisArg, argumentsList);
+            
+            if (isStore(result)) {
+                window.__captured_redux_store__ = result;
+                return result;
+            }
+
+            if (typeof result === 'function') {
+                return new Proxy(result, handler);
+            }
+
+            return result;
+        }
+    };
 
     let devtoolsExt = window.__REDUX_DEVTOOLS_EXTENSION__;
     let devtoolsCompose = window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__;
 
     try {
+        if (devtoolsExt && typeof devtoolsExt === 'function') devtoolsExt = new Proxy(devtoolsExt, handler);
+        if (devtoolsCompose && typeof devtoolsCompose === 'function') devtoolsCompose = new Proxy(devtoolsCompose, handler);
+
         Object.defineProperty(window, '__REDUX_DEVTOOLS_EXTENSION__', {
             get() { return devtoolsExt; },
-            set(val) { devtoolsExt = patchEnhancer(val); },
+            set(val) { typeof val === 'function' ? devtoolsExt = new Proxy(val, handler) : devtoolsExt = val; },
             configurable: true,
             enumerable: true
         });
 
         Object.defineProperty(window, '__REDUX_DEVTOOLS_EXTENSION_COMPOSE__', {
             get() { return devtoolsCompose; },
-            set(val) { devtoolsCompose = patchEnhancer(val); },
+            set(val) { typeof val === 'function' ? devtoolsCompose = new Proxy(val, handler) : devtoolsCompose = val; },
             configurable: true,
             enumerable: true
         });
-
-        if (devtoolsExt) devtoolsExt = patchEnhancer(devtoolsExt);
-        if (devtoolsCompose) devtoolsCompose = patchEnhancer(devtoolsCompose);
     } catch(e) { /* Ignore if property is locked */ }
 })();
 
@@ -154,7 +155,49 @@ if (!window.__DEVTOOLS_WS_HOOK_INSTALLED__) {
                     }
                 }
 
-                // Method 4: Try to access React's internal instance
+                // Method 4: Scan React DOM Tree for Provider (Extremely reliable fallback)
+                if (!reduxData.state) {
+                    try {
+                        const allElems = document.querySelectorAll('*');
+                        for (let i = 0; i < allElems.length; i++) {
+                            const el = allElems[i];
+                            const keys = Object.keys(el);
+                            for (const key of keys) {
+                                if (key.startsWith('__reactContainer$') || key.startsWith('__reactFiber$')) {
+                                    let queue = [el[key]];
+                                    let visited = new Set();
+
+                                    while (queue.length > 0 && visited.size < 10000) {
+                                        let node = queue.shift();
+                                        if (!node || visited.has(node)) continue;
+                                        visited.add(node);
+
+                                        const props = node.memoizedProps || node.pendingProps;
+                                        if (props && props.store && typeof props.store.getState === 'function') {
+                                            reduxData.state = props.store.getState();
+                                            reduxData.available = true;
+                                            reduxData.method = 'React HTML Tree Scanner';
+                                            break;
+                                        }
+                                        if (props && props.children && props.children.props && props.children.props.store && typeof props.children.props.store.getState === 'function') {
+                                            reduxData.state = props.children.props.store.getState();
+                                            reduxData.available = true;
+                                            reduxData.method = 'React HTML Tree Scanner';
+                                            break;
+                                        }
+
+                                        if (node.child) queue.push(node.child);
+                                        if (node.sibling) queue.push(node.sibling);
+                                    }
+                                }
+                                if (reduxData.state) break;
+                            }
+                            if (reduxData.state) break;
+                        }
+                    } catch (e) { }
+                }
+
+                // Method 5: Try to access React's internal instance (last resort)
                 if (!reduxData.state && typeof window.React !== 'undefined' && window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
                     reduxData.method = 'React DevTools detected';
                     reduxData.available = true;

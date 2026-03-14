@@ -861,6 +861,41 @@ console.log = function (...args) {
         output += data.cookies || '(no cookies)';
         output += '\n\n';
 
+        // Cache Storage
+        output += 'CACHE STORAGE\n';
+        output += '-'.repeat(80) + '\n';
+        if (data.caches && Object.keys(data.caches).length > 0) {
+            for (const [cacheName, requests] of Object.entries(data.caches)) {
+                output += `[Cache: ${cacheName}]\n`;
+                if (Array.isArray(requests) && requests.length > 0) {
+                    requests.forEach(req => output += `  - ${req}\n`);
+                } else if (requests.error) {
+                    output += `  ${requests.error}\n`;
+                } else {
+                    output += `  (empty)\n`;
+                }
+            }
+        } else {
+            output += '(empty or unavailable)\n';
+        }
+        output += '\n';
+
+        // IndexedDB
+        output += 'INDEXED DB\n';
+        output += '-'.repeat(80) + '\n';
+        if (data.indexedDB && Array.isArray(data.indexedDB) && data.indexedDB.length > 0) {
+            data.indexedDB.forEach(db => {
+                if (db.error) {
+                    output += `${db.error}\n`;
+                } else {
+                    output += `Database: ${db.name} (Version: ${db.version})\n`;
+                }
+            });
+        } else {
+            output += '(empty or unavailable)\n';
+        }
+        output += '\n';
+
         output += '='.repeat(80) + '\n';
         return output;
     }
