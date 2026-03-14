@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="16" height="16" fill="url(#grad)" rx="1.6"/>
+  <g transform="translate(8, 8)">
+    <!-- Socket circle -->
+    <circle cx="0" cy="0" r="3.2" fill="none" stroke="white" stroke-width="0.64"/>
+    <!-- Plug pins -->
+    <rect x="-1.92" y="-5.6" width="0.96" height="2.88" fill="white" rx="0.32"/>
+    <rect x="0.96" y="-5.6" width="0.96" height="2.88" fill="white" rx="0.32"/>
+    <!-- Signal waves -->
+    <path d="M -4,0 L -3.2,-0.96 L -2.4,0" 
+          fill="none" stroke="white" stroke-width="0.64" stroke-linecap="round"/>
+    <path d="M 2.4,0 L 3.2,-0.96 L 4,0" 
+          fill="none" stroke="white" stroke-width="0.64" stroke-linecap="round"/>
+  </g>
+</svg>

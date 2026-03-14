@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Network & WebSocket Copy Panel</title>
+  <style>
+    :root {
+      --bg-color: #f5f5f5;
+      --container-bg: white;
+      --text-color: #202124;
+      --heading-color: #1a73e8;
+      --info-bg: #e8f0fe;
+      --info-border: #1a73e8;
+      --info-text: #202124;
+      --btn-bg: #1a73e8;
+      --btn-hover: #1557b0;
+      --stat-bg: #f8f9fa;
+      --stat-border: #e0e0e0;
+      --stat-label: #5f6368;
+      --status-success-bg: #e6f4ea;
+      --status-success-text: #137333;
+      --status-error-bg: #fce8e6;
+      --status-error-text: #c5221f;
+      --log-bg: #fff;
+      --log-border: #ccc;
+      --log-container-bg: #e0f7fa;
+      --log-container-border: #b2ebf2;
+      --log-text-color: #202124;
+      --ws-notice-bg: #e8f5e9;
+      --ws-notice-border: #4caf50;
+      --instructions-bg: #fff9e6;
+      --instructions-border: #f9ab00;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #202124; /* Standard Chrome dark background */
+        --container-bg: #292a2d;
+        --text-color: #e8eaed;
+        --heading-color: #8ab4f8;
+        --info-bg: #3c4043;
+        --info-border: #8ab4f8;
+        --info-text: #e8eaed;
+        --btn-bg: #8ab4f8;
+        --btn-hover: #aecbfa;
+        --stat-bg: #3c4043;
+        --stat-border: #5f6368;
+        --stat-label: #9aa0a6;
+        --status-success-bg: #1e8e3e;
+        --status-success-text: #e8eaed;
+        --status-error-bg: #d93025;
+        --status-error-text: #e8eaed;
+        --log-bg: #1e1e1e;
+        --log-border: #444;
+        --log-container-bg: #123e44;
+        --log-container-border: #235d66;
+        --log-text-color: #e8eaed;
+        --ws-notice-bg: #1e3a22;
+        --ws-notice-border: #388e3c;
+        --instructions-bg: #403613;
+        --instructions-border: #f2a600;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      padding: 20px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: var(--container-bg);
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+      color: var(--heading-color);
+      margin-top: 0;
+      font-size: 24px;
+    }
+    
+    .info {
+      background: var(--info-bg);
+      color: var(--info-text);
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      border-left: 4px solid var(--info-border);
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    
+    button {
+      background: var(--btn-bg);
+      color: #202124; /* better contrast for light btn in dark mode */
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    button {
+      background: var(--btn-bg);
+      color: white; /* Light mode text */
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      button {
+        color: #202124; /* Dark mode text (dark text on light blue button) */
+      }
+    }
+    
+    button:hover {
+      background: var(--btn-hover);
+    }
+    
+    button:disabled {
+      background: var(--stat-border);
+      color: var(--stat-label);
+      cursor: not-allowed;
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    
+    .stat-card {
+      background: var(--stat-bg);
+      padding: 15px;
+      border-radius: 4px;
+      border: 1px solid var(--stat-border);
+    }
+    
+    .stat-card h3 {
+      margin: 0 0 5px 0;
+      color: var(--stat-label);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    
+    .stat-card p {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--heading-color);
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 15px;
+      display: none;
+    }
+    
+    .status.success {
+      background: var(--status-success-bg);
+      color: var(--status-success-text);
+      border: 1px solid var(--status-success-text);
+    }
+    
+    .status.error {
+      background: var(--status-error-bg);
+      color: var(--status-error-text);
+      border: 1px solid var(--status-error-text);
+    }
+    
+    .instructions {
+      margin-top: 20px;
+      padding: 15px;
+      background: var(--instructions-bg);
+      border-radius: 4px;
+      border-left: 4px solid var(--instructions-border);
+    }
+    
+    .instructions ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    
+    .instructions li {
+      margin: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>� DevTools Data Exporter Pro</h1>
+    
+    <div class="info">
+      <strong>Ultimate Developer Tool:</strong> Export ALL your debugging data with one click - Network, WebSocket, Redux, localStorage, Console, and more!
+    </div>
+    
+    <div class="button-group">
+      <button id="copyAllNetwork">📋 Copy Network Requests</button>
+      <button id="copyWebSockets">🔌 Copy WebSocket Messages</button>
+      <button id="copyApplicationData">💾 Copy Application Data</button>
+    </div>
+    
+    <div id="wsNotice" class="info" style="display: none; background: var(--ws-notice-bg); border-left-color: var(--ws-notice-border); margin-top: 10px;">
+      ✅ <strong>WebSocket Data:</strong> Capturing connection details (URLs, headers, timing, status). Extension works without browser popups!
+    </div>
+    
+    <div class="button-group">
+      <button id="copyReduxState">⚛️ Copy Redux State</button>
+      <button id="copyConsoleLogs">📝 Copy Console Logs</button>
+      <button id="copyDOMContent">🌐 Copy DOM/HTML</button>
+    </div>
+    
+    <div class="button-group">
+      <button id="copyEverything">⭐ Copy EVERYTHING</button>
+      <button id="clearData">🗑️ Clear Data</button>
+    </div>
+    
+    <div id="status" class="status"></div>
+    
+    <div class="stats">
+      <div class="stat-card">
+        <h3>Network Requests</h3>
+        <p id="networkCount">0</p>
+      </div>
+      <div class="stat-card">
+        <h3>WebSocket Messages</h3>
+        <p id="wsCount">0</p>
+      </div>
+      <div class="stat-card">
+        <h3>Console Logs</h3>
+        <p id="consoleCount">0</p>
+      </div>
+      <div class="stat-card">
+        <h3>Total Data Size</h3>
+        <p id="dataSize">0 KB</p>
+      </div>
+    </div>
+    
+    <div class="instructions">
+      <strong>📖 How to Use:</strong>
+      <ol>
+        <li><strong>Network:</strong> Reload page to capture HTTP/HTTPS traffic</li>
+        <li><strong>WebSocket:</strong> Captures connection details (URLs, headers, timing) - no reload needed!</li>
+        <li><strong>Application Data:</strong> Exports localStorage, sessionStorage, cookies</li>
+        <li><strong>Redux State:</strong> Captures Redux store if available on page</li>
+        <li><strong>Console Logs:</strong> All console.log/error/warn messages</li>
+        <li><strong>DOM Content:</strong> Complete HTML structure</li>
+        <li><strong>Copy Everything:</strong> All data in one comprehensive export!</li>
+      </ol>
+      <p><strong>💡 Tip:</strong> For Redux, make sure your app exposes the store as <code>window.store</code></p>
+    </div>
+
+    <div style="margin-top: 20px; padding: 10px; background: var(--log-container-bg); border: 1px solid var(--log-container-border); border-radius: 4px; color: var(--text-color);">
+      <h3 style="margin-top: 0; font-size: 14px; display: flex; justify-content: space-between;">
+        <span>🐛 Live Debug Logs</span>
+        <button id="clearDebugBtn" style="padding: 2px 8px; font-size: 11px;">Clear Logs</button>
+      </h3>
+      <div id="debugLogs" style="font-family: monospace; font-size: 11px; white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto; background: var(--log-bg); color: var(--log-text-color); padding: 5px; border: 1px solid var(--log-border);"></div>
+    </div>
+  </div>
+  
+  <script src="panel.js"></script>
+</body>
+</html>

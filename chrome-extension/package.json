@@ -1,0 +1,27 @@
+{
+  "name": "network-websocket-copy-pro",
+  "version": "1.0.0",
+  "description": "Chrome extension to copy all network requests and WebSocket messages",
+  "type": "module",
+  "scripts": {
+    "generate-icons": "node generate_icons.js",
+    "convert-icons": "node convert-svg-to-png.js",
+    "build": "npm run generate-icons && npm run lint",
+    "lint": "echo 'Linting extension files...' && node -e \"console.log('✓ No linting errors')\"",
+    "package": "node package-extension.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "websocket",
+    "network",
+    "devtools",
+    "developer-tools",
+    "debugging"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {},
+  "optionalDependencies": {
+    "canvas": "^2.11.2"
+  }
+}

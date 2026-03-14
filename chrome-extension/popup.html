@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Network & WebSocket Copy Pro</title>
+  <style>
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #202124;
+      --heading-color: #1a73e8;
+      --subtitle-color: #5f6368;
+      --feature-bg: #f8f9fa;
+      --feature-border: #e0e0e0;
+      --instruction-bg: #e8f0fe;
+      --instruction-border: #1a73e8;
+      --btn-bg: #1a73e8;
+      --btn-text: #ffffff;
+      --btn-hover: #1557b0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #202124;
+        --text-color: #e8eaed;
+        --heading-color: #8ab4f8;
+        --subtitle-color: #9aa0a6;
+        --feature-bg: #292a2d;
+        --feature-border: #3c4043;
+        --instruction-bg: #1e3a5f;
+        --instruction-border: #8ab4f8;
+        --btn-bg: #8ab4f8;
+        --btn-text: #202124;
+        --btn-hover: #aecbfa;
+      }
+    }
+
+    body {
+      width: 400px;
+      min-height: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: var(--bg-color);
+      color: var(--text-color);
+    }
+    
+    .container {
+      padding: 25px;
+    }
+    
+    h1 {
+      margin: 0 0 5px 0;
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--heading-color);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .subtitle {
+      color: var(--subtitle-color);
+      font-size: 14px;
+      margin-bottom: 25px;
+      padding-left: 2px;
+    }
+    
+    .feature-list {
+      background: var(--feature-bg);
+      border: 1px solid var(--feature-border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    
+    .feature {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    .feature:last-child {
+      margin-bottom: 0;
+    }
+    
+    .feature-icon {
+      font-size: 18px;
+      margin-right: 12px;
+      min-width: 24px;
+    }
+    
+    .instructions {
+      background: var(--instruction-bg);
+      border-left: 4px solid var(--instruction-border);
+      border-radius: 4px;
+      padding: 15px;
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    
+    .instructions strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: var(--heading-color);
+    }
+    
+    .instructions ol {
+      margin: 8px 0 0 0;
+      padding-left: 20px;
+    }
+    
+    .instructions li {
+      margin: 5px 0;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 10px;
+    }
+    
+    button {
+      flex: 1;
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: background 0.2s;
+    }
+    
+    button:hover {
+      background: var(--btn-hover);
+    }
+    
+    .version {
+      text-align: center;
+      margin-top: 20px;
+      color: var(--subtitle-color);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>� DevTools Data Exporter Pro</h1>
+    <div class="subtitle">Export ALL debugging data with one click</div>
+    
+    <div class="feature-list">
+      <div class="feature">
+        <span class="feature-icon">📋</span>
+        <span>Network requests & responses</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">🔌</span>
+        <span>WebSocket messages</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">⚛️</span>
+        <span>Redux state (FREE!)</span>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">💾</span>
+        <span>Application data & Console logs</span>
+      </div>
+    </div>
+    
+    <div class="instructions">
+      <strong>⚡ Quick Start:</strong>
+      <ol>
+        <li><strong>Press F12</strong> to open DevTools</li>
+        <li>Find <strong>"Data Export"</strong> tab (at the top)</li>
+        <li>Click any <strong>copy button</strong></li>
+        <li>Paste anywhere!</li>
+      </ol>
+    </div>
+    
+    <div class="button-group">
+      <button id="openDevTools">Press F12 to Start</button>
+      <button id="openHelp">Help & Guide</button>
+    </div>
+    
+    <div class="version">Version 2.0.0 | Made with ❤️</div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

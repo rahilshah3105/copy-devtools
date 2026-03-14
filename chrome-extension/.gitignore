@@ -1,0 +1,32 @@
+# Node modules
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+build/
+*.zip
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.log
+.cache/
+
+# Don't ignore SVG icons (they're source files)
+!icons/*.svg
+
+# Environment files
+.env
+.env.local
