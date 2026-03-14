@@ -4,6 +4,7 @@
 console.log('Network & WebSocket Copy Pro - Background Service Worker Loaded');
 
 const MAX_WS_EVENTS_PER_TAB = 5000;
+const MAX_CONSOLE_LOGS_PER_TAB = 10000;
 
 function getStorage(keys) {
   return new Promise((resolve) => {
@@ -33,6 +34,24 @@ async function appendWebSocketEvent(tabId, eventData) {
   }
 
   await setStorage({ wsEventsByTab });
+}
+
+async function appendConsoleLogEvent(tabId, eventData) {
+  if (!tabId || !eventData) return;
+
+  const storage = await getStorage(['consoleLogsByTab']);
+  const consoleLogsByTab = storage.consoleLogsByTab || {};
+  const key = String(tabId);
+  const current = Array.isArray(consoleLogsByTab[key]) ? consoleLogsByTab[key] : [];
+
+  current.push(eventData);
+  if (current.length > MAX_CONSOLE_LOGS_PER_TAB) {
+    consoleLogsByTab[key] = current.slice(-Math.floor(MAX_CONSOLE_LOGS_PER_TAB * 0.8));
+  } else {
+    consoleLogsByTab[key] = current;
+  }
+
+  await setStorage({ consoleLogsByTab });
 }
 
 // Listen for messages from DevTools or content scripts
@@ -73,6 +92,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'consoleLogEvent') {
+    const senderTabId = sender && sender.tab ? sender.tab.id : null;
+    const event = {
+      ...(message.data || {}),
+      tabId: senderTabId
+    };
+
+    appendConsoleLogEvent(senderTabId, event)
+      .then(() => {
+        chrome.runtime.sendMessage({
+          type: 'consoleLogEvent',
+          data: event,
+          tabId: senderTabId
+        }, () => void chrome.runtime.lastError);
+        sendResponse({ success: true });
+      })
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+
+    return true;
+  }
+
   if (message.type === 'getWsEvents') {
     const tabId = message.tabId;
     getStorage(['wsEventsByTab'])
@@ -88,13 +128,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'getConsoleEvents') {
+    const tabId = message.tabId;
+    getStorage(['consoleLogsByTab'])
+      .then((storage) => {
+        const consoleLogsByTab = storage.consoleLogsByTab || {};
+        const events = Array.isArray(consoleLogsByTab[String(tabId)])
+          ? consoleLogsByTab[String(tabId)]
+          : [];
+        sendResponse({ success: true, events });
+      })
+      .catch((error) => sendResponse({ success: false, error: error.message, events: [] }));
+
+    return true;
+  }
+
   if (message.type === 'clearWsEvents') {
     const tabId = message.tabId;
-    getStorage(['wsEventsByTab'])
+    getStorage(['wsEventsByTab', 'consoleLogsByTab'])
       .then(async (storage) => {
         const wsEventsByTab = storage.wsEventsByTab || {};
+        const consoleLogsByTab = storage.consoleLogsByTab || {};
         delete wsEventsByTab[String(tabId)];
-        await setStorage({ wsEventsByTab });
+        delete consoleLogsByTab[String(tabId)];
+        await setStorage({ wsEventsByTab, consoleLogsByTab });
         sendResponse({ success: true });
       })
       .catch((error) => sendResponse({ success: false, error: error.message }));

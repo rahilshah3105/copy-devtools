@@ -61,9 +61,10 @@ console.log = function (...args) {
 
     // Load queued WebSocket events captured by background/content-script before panel opened.
     loadQueuedWebSocketEvents();
+    loadQueuedConsoleEvents();
 
-    // Capture console logs
-    if (chrome.devtools.console) {
+    // Capture console logs from DevTools (if available, mostly deprecated)
+    if (chrome.devtools && chrome.devtools.console && chrome.devtools.console.onMessageAdded) {
         chrome.devtools.console.onMessageAdded.addListener((message) => {
             if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
                 consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
@@ -78,6 +79,44 @@ console.log = function (...args) {
             });
             updateStats();
         });
+    }
+
+    // Robust copy to clipboard helper for DevTools environment
+    async function copyToClipboard(text) {
+        try {
+            // First try modern async API, requires document to be focused
+            if (document.hasFocus && document.hasFocus() && navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+            throw new Error('Not focused or Modern API unavailable');
+        } catch (err) {
+            // Fallback for DevTools context whenever the user clicked but the iframe isn't fully focused
+            return new Promise((resolve, reject) => {
+                try {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    // Prevent scrolling and ensure it's out of viewport
+                    textarea.style.position = 'fixed';
+                    textarea.style.top = '-9999px';
+                    textarea.style.left = '-9999px';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    
+                    textarea.select();
+                    const successful = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    
+                    if (successful) {
+                        resolve();
+                    } else {
+                        reject(new Error('execCommand("copy") failed'));
+                    }
+                } catch (fallbackErr) {
+                    reject(fallbackErr);
+                }
+            });
+        }
     }
 
     // Sanitize text to prevent XSS
@@ -222,6 +261,27 @@ console.log = function (...args) {
                     return;
                 }
                 processWebSocketEvent(message.data);
+                return;
+            }
+
+            if (message && message.type === 'consoleLogEvent' && message.data) {
+                if (message.tabId && tabId && message.tabId !== tabId) {
+                    return;
+                }
+                if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
+                    consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
+                }
+                consoleLogs.push({
+                    level: message.data.level || 'log',
+                    text: message.data.text || '',
+                    source: message.data.source || 'console',
+                    url: message.data.url || window.location.href,
+                    line: message.data.line || '',
+                    timestamp: message.data.timestamp || new Date().toISOString(),
+                    count: 1
+                });
+                updateStats();
+                return;
             }
         } catch (error) {
             console.error('Error processing message:', error);
@@ -249,7 +309,44 @@ console.log = function (...args) {
                 console.log(`✅ Loaded ${response.events.length} queued WebSocket events from background`);
             }
         } catch (error) {
-            console.warn('⚠️ Could not load queued WebSocket events:', error?.message || error);
+            console.error('Error loading queued WebSocket events:', error);
+        }
+    }
+
+    async function loadQueuedConsoleEvents() {
+        try {
+            if (!tabId) return;
+
+            const response = await chrome.runtime.sendMessage({
+                type: 'getConsoleEvents',
+                tabId
+            });
+
+            if (!response || !response.success || !Array.isArray(response.events)) {
+                return;
+            }
+
+            response.events.forEach((event) => {
+                if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
+                    consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
+                }
+                consoleLogs.push({
+                    level: event.level || 'log',
+                    text: event.text || '',
+                    source: event.source || 'console',
+                    url: event.url || '',
+                    line: event.line || '',
+                    timestamp: event.timestamp || new Date().toISOString(),
+                    count: 1
+                });
+            });
+
+            if (response.events.length > 0) {
+                console.log(`✅ Loaded ${response.events.length} queued console events from background`);
+                updateStats();
+            }
+        } catch (error) {
+            console.error('Error loading queued console events:', error);
         }
     }
 
@@ -389,11 +486,11 @@ console.log = function (...args) {
             const formattedData = await formatNetworkRequests(networkRequests);
 
             // Copy to clipboard
-            await navigator.clipboard.writeText(formattedData);
+            await copyToClipboard(formattedData);
             showStatus(`✅ Successfully copied ${networkRequests.length} network requests to clipboard!`, 'success');
         } catch (error) {
             console.error('Copy error:', error);
-            const errorMsg = sanitizeText(error.message);
+            const errorMsg = sanitizeText(error.message || String(error));
             showStatus(`❌ Error copying data: ${errorMsg}`, 'error');
         }
     });
@@ -407,11 +504,11 @@ console.log = function (...args) {
 
         try {
             const formattedData = formatWebSocketMessages(webSocketMessages);
-            await navigator.clipboard.writeText(formattedData);
+            await copyToClipboard(formattedData);
             showStatus(`✅ Successfully copied ${webSocketMessages.length} WebSocket connections to clipboard!`, 'success');
         } catch (error) {
             console.error('Copy error:', error);
-            const errorMsg = sanitizeText(error.message);
+            const errorMsg = sanitizeText(error.message || String(error));
             showStatus(`❌ Error copying data: ${errorMsg}`, 'error');
         }
     });
@@ -455,14 +552,14 @@ console.log = function (...args) {
 
             if (response && response.success) {
                 const formattedData = formatApplicationData(response.data);
-                await navigator.clipboard.writeText(formattedData);
+                await copyToClipboard(formattedData);
                 showStatus('✅ Application data copied to clipboard!', 'success');
             } else {
                 throw new Error(response?.error || 'Failed to get application data');
             }
         } catch (error) {
             console.error('Application data error:', error);
-            showStatus(`❌ Error: ${sanitizeText(error.message)}. Make sure you're on a valid webpage.`, 'error');
+            showStatus(`❌ Error: ${sanitizeText(error.message || String(error))}. Make sure you're on a valid webpage.`, 'error');
         }
     });
 
@@ -475,7 +572,7 @@ console.log = function (...args) {
 
             if (response && response.success && response.data) {
                 const formattedData = formatReduxState(response.data);
-                await navigator.clipboard.writeText(formattedData);
+                await copyToClipboard(formattedData);
                 showStatus('✅ Redux state copied to clipboard!', 'success');
             } else {
                 throw new Error(response?.error || 'Redux state not found');
@@ -495,11 +592,11 @@ console.log = function (...args) {
 
         try {
             const formattedData = formatConsoleLogs(consoleLogs);
-            await navigator.clipboard.writeText(formattedData);
+            await copyToClipboard(formattedData);
             showStatus(`✅ Copied ${consoleLogs.length} console logs to clipboard!`, 'success');
         } catch (error) {
             console.error('Console logs error:', error);
-            showStatus(`❌ Error: ${sanitizeText(error.message)}`, 'error');
+            showStatus(`❌ Error: ${sanitizeText(error.message || String(error))}`, 'error');
         }
     });
 
@@ -512,14 +609,14 @@ console.log = function (...args) {
 
             if (response && response.success) {
                 const formattedData = formatDOMContent(response.data);
-                await navigator.clipboard.writeText(formattedData);
+                await copyToClipboard(formattedData);
                 showStatus('✅ DOM content copied to clipboard!', 'success');
             } else {
                 throw new Error(response?.error || 'Failed to get DOM content');
             }
         } catch (error) {
             console.error('DOM content error:', error);
-            showStatus(`❌ Error: ${sanitizeText(error.message)}`, 'error');
+            showStatus(`❌ Error: ${sanitizeText(error.message || String(error))}`, 'error');
         }
     });
 
@@ -571,12 +668,12 @@ console.log = function (...args) {
 
             // Format everything
             const finalOutput = formatEverything(allData);
-            await navigator.clipboard.writeText(finalOutput);
+            await copyToClipboard(finalOutput);
 
             showStatus('✅ EVERYTHING copied to clipboard! Check your paste destination.', 'success');
         } catch (error) {
             console.error('Copy everything error:', error);
-            showStatus(`❌ Error: ${sanitizeText(error.message)}`, 'error');
+            showStatus(`❌ Error: ${sanitizeText(error.message || String(error))}`, 'error');
         }
     });
 

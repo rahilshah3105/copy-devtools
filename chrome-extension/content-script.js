@@ -3,31 +3,35 @@
 
 // console.log('DevTools Data Exporter - Content Script Loaded');
 
-// Bridge WebSocket events emitted from MAIN world hook script to extension runtime.
+// Bridge WebSocket and Console events emitted from MAIN world hook script to extension runtime.
 window.addEventListener('message', (event) => {
     try {
-        if (event.source !== window) return;
+        if (event.source !== window || !event.data) return;
         const payload = event.data;
-        if (!payload || payload.source !== 'DEVTOOLS_WS_HOOK' || !payload.data) return;
-
-        try {
-            chrome.runtime.sendMessage({
-                type: 'websocketEvent',
-                data: payload.data
-            }, () => {
-                // Swallow expected errors if no listeners are attached yet.
-                void chrome.runtime.lastError;
-            });
-        } catch (e) {
-            if (e.message.includes('Extension context invalidated')) {
-                // This is normal if the extension was reloaded but the page was not.
-                console.debug('DevTools Data Exporter: Extension reloaded. Please refresh the page to reconnect.');
-            } else {
-                console.warn('Failed to forward WebSocket event via runtime message:', e);
+        
+        if (payload.source === 'DEVTOOLS_WS_HOOK' && payload.data) {
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'websocketEvent',
+                    data: payload.data
+                }, () => void chrome.runtime.lastError);
+            } catch (e) {
+                if (e.message && String(e.message).includes('Extension context invalidated')) {
+                    console.debug('DevTools Data Exporter: Extension reloaded. Please refresh the page.');
+                }
             }
         }
+        
+        if (payload.source === 'DEVTOOLS_CONSOLE_HOOK' && payload.data) {
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'consoleLogEvent',
+                    data: payload.data
+                }, () => void chrome.runtime.lastError);
+            } catch (e) {}
+        }
     } catch (error) {
-        console.warn('Failed to process WebSocket event:', error);
+        // Ignore errors
     }
 });
 

@@ -20,7 +20,9 @@
   ],
   "author": "Your Name",
   "license": "MIT",
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/chrome": "^0.1.37"
+  },
   "optionalDependencies": {
     "canvas": "^2.11.2"
   }

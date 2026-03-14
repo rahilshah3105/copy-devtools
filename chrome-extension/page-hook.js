@@ -1,3 +1,66 @@
+// === CONSOLE INTERCEPTOR ===
+(function captureConsole() {
+    if (window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__) return;
+    window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__ = true;
+
+    const emit = (type, args, sourceLoc = '') => {
+        try {
+            window.postMessage({
+                source: 'DEVTOOLS_CONSOLE_HOOK',
+                data: {
+                    level: type,
+                    text: args.map(a => typeof a === 'object' ? (a instanceof Error ? a.stack : JSON.stringify(a)) : String(a)).join(' '),
+                    source: 'console',
+                    url: window.location.href,
+                    line: sourceLoc,
+                    timestamp: new Date().toISOString()
+                }
+            }, '*');
+        } catch(e) {}
+    };
+
+    ['log', 'warn', 'error', 'info', 'debug'].forEach(level => {
+        const orig = console[level];
+        console[level] = function(...args) {
+            let callerInfo = '';
+            try {
+                throw new Error();
+            } catch (err) {
+                if (err.stack) {
+                    const lines = err.stack.split('\n');
+                    if (lines.length > 2) {
+                        const match = lines[2].match(/(?:https?:\/\/[^:]+|)\/([^\/]+):(\d+):/);
+                        if (match) {
+                            callerInfo = `${match[1]}:${match[2]}`;
+                        } else {
+                            const fullMatch = lines[2].match(/(https?:\/\/[^:]+:\d+:\d+)/);
+                            if (fullMatch) callerInfo = fullMatch[1];
+                        }
+                    }
+                }
+            }
+            emit(level, args, callerInfo);
+            return orig.apply(this, args);
+        };
+    });
+
+    window.addEventListener('error', (e) => {
+        emit('error', [e.message || String(e)], e.filename ? `${e.filename}:${e.lineno}` : '');
+    });
+
+    try {
+        if (typeof PerformanceObserver !== 'undefined') {
+            new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                    if (entry.duration > 50) {
+                        emit('warn', [`[Violation] Forced reflow / 'longtask' handler took ${Math.round(entry.duration)}ms`], '');
+                    }
+                }
+            }).observe({entryTypes: ['longtask']});
+        }
+    } catch(e) {}
+})();
+
 // === REDUX STORE INTERCEPTOR ===
 (function captureRedux() {
     if (window.__DEVTOOLS_REDUX_HOOK_INSTALLED__) return;
@@ -97,18 +160,21 @@ if (!window.__DEVTOOLS_WS_HOOK_INSTALLED__) {
             const nativeSend = ws.send;
             ws.send = function send(data) {
                 emit('message', { url: ws.url || String(url), connectionId: cid, direction: 'outgoing', data: toSafeText(data) });
+                return nativeSend.call(ws, data);
             }
 
-            WrappedWebSocket.prototype = NativeWebSocket.prototype;
-            Object.setPrototypeOf(WrappedWebSocket, NativeWebSocket);
-            WrappedWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
-            WrappedWebSocket.OPEN = NativeWebSocket.OPEN;
-            WrappedWebSocket.CLOSING = NativeWebSocket.CLOSING;
-            WrappedWebSocket.CLOSED = NativeWebSocket.CLOSED;
-
-            window.WebSocket = WrappedWebSocket;
-            emit('hook_installed', { url: window.location.href });
+            return ws;
         }
+
+        WrappedWebSocket.prototype = NativeWebSocket.prototype;
+        Object.setPrototypeOf(WrappedWebSocket, NativeWebSocket);
+        Object.defineProperty(WrappedWebSocket, 'CONNECTING', { get: () => NativeWebSocket.CONNECTING });
+        Object.defineProperty(WrappedWebSocket, 'OPEN', { get: () => NativeWebSocket.OPEN });
+        Object.defineProperty(WrappedWebSocket, 'CLOSING', { get: () => NativeWebSocket.CLOSING });
+        Object.defineProperty(WrappedWebSocket, 'CLOSED', { get: () => NativeWebSocket.CLOSED });
+
+        window.WebSocket = WrappedWebSocket;
+        emit('hook_installed', { url: window.location.href });
     }
 
     // Listen for requests from the content script to extract Redux state
