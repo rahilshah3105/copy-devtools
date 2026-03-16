@@ -6,6 +6,20 @@ console.log('Network & WebSocket Copy Pro - Background Service Worker Loaded');
 const MAX_WS_EVENTS_PER_TAB = 5000;
 const MAX_CONSOLE_LOGS_PER_TAB = 10000;
 
+function extractOrigin(url) {
+  try {
+    if (!url) return '';
+    return new URL(url).origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function makeScopedTabKey(tabId, pageOrigin) {
+  const origin = pageOrigin || 'unknown-origin';
+  return `${String(tabId)}::${origin}`;
+}
+
 function getStorage(keys) {
   return new Promise((resolve) => {
     chrome.storage.local.get(keys, (result) => resolve(result || {}));
@@ -18,12 +32,12 @@ function setStorage(value) {
   });
 }
 
-async function appendWebSocketEvent(tabId, eventData) {
+async function appendWebSocketEvent(tabId, pageOrigin, eventData) {
   if (!tabId || !eventData) return;
 
   const storage = await getStorage(['wsEventsByTab']);
   const wsEventsByTab = storage.wsEventsByTab || {};
-  const key = String(tabId);
+  const key = makeScopedTabKey(tabId, pageOrigin);
   const current = Array.isArray(wsEventsByTab[key]) ? wsEventsByTab[key] : [];
 
   current.push(eventData);
@@ -39,9 +53,11 @@ async function appendWebSocketEvent(tabId, eventData) {
 async function appendConsoleLogEvent(tabId, eventData) {
   if (!tabId || !eventData) return;
 
+  const pageOrigin = eventData.pageOrigin || '';
+
   const storage = await getStorage(['consoleLogsByTab']);
   const consoleLogsByTab = storage.consoleLogsByTab || {};
-  const key = String(tabId);
+  const key = makeScopedTabKey(tabId, pageOrigin);
   const current = Array.isArray(consoleLogsByTab[key]) ? consoleLogsByTab[key] : [];
 
   current.push(eventData);
@@ -69,13 +85,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'websocketEvent') {
     const senderTabId = sender && sender.tab ? sender.tab.id : null;
+    const pageOrigin = message.data && message.data.pageOrigin
+      ? String(message.data.pageOrigin)
+      : extractOrigin(sender && sender.tab ? sender.tab.url : '');
     const event = {
       ...(message.data || {}),
       tabId: senderTabId,
+      pageOrigin,
       capturedAt: new Date().toISOString()
     };
 
-    appendWebSocketEvent(senderTabId, event)
+    appendWebSocketEvent(senderTabId, pageOrigin, event)
       .then(() => {
         // Forward in real-time for any open panel listeners.
         chrome.runtime.sendMessage({
@@ -94,9 +114,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'consoleLogEvent') {
     const senderTabId = sender && sender.tab ? sender.tab.id : null;
+    const pageOrigin = message.data && message.data.pageOrigin
+      ? String(message.data.pageOrigin)
+      : extractOrigin(sender && sender.tab ? sender.tab.url : '');
     const event = {
       ...(message.data || {}),
-      tabId: senderTabId
+      tabId: senderTabId,
+      pageOrigin
     };
 
     appendConsoleLogEvent(senderTabId, event)
@@ -115,12 +139,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'getWsEvents') {
     const tabId = message.tabId;
+    const pageOrigin = message.pageOrigin || '';
     getStorage(['wsEventsByTab'])
       .then((storage) => {
         const wsEventsByTab = storage.wsEventsByTab || {};
-        const events = Array.isArray(wsEventsByTab[String(tabId)])
+        const scopedKey = makeScopedTabKey(tabId, pageOrigin);
+        const scopedEvents = Array.isArray(wsEventsByTab[scopedKey])
+          ? wsEventsByTab[scopedKey]
+          : [];
+        const legacyEvents = Array.isArray(wsEventsByTab[String(tabId)])
           ? wsEventsByTab[String(tabId)]
           : [];
+        const events = pageOrigin ? scopedEvents : legacyEvents;
         sendResponse({ success: true, events });
       })
       .catch((error) => sendResponse({ success: false, error: error.message, events: [] }));
@@ -130,12 +160,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'getConsoleEvents') {
     const tabId = message.tabId;
+    const pageOrigin = message.pageOrigin || '';
     getStorage(['consoleLogsByTab'])
       .then((storage) => {
         const consoleLogsByTab = storage.consoleLogsByTab || {};
-        const events = Array.isArray(consoleLogsByTab[String(tabId)])
+        const scopedKey = makeScopedTabKey(tabId, pageOrigin);
+        const scopedEvents = Array.isArray(consoleLogsByTab[scopedKey])
+          ? consoleLogsByTab[scopedKey]
+          : [];
+        const legacyEvents = Array.isArray(consoleLogsByTab[String(tabId)])
           ? consoleLogsByTab[String(tabId)]
           : [];
+        const events = pageOrigin ? scopedEvents : legacyEvents;
         sendResponse({ success: true, events });
       })
       .catch((error) => sendResponse({ success: false, error: error.message, events: [] }));
@@ -145,10 +181,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'clearWsEvents') {
     const tabId = message.tabId;
+    const pageOrigin = message.pageOrigin || '';
     getStorage(['wsEventsByTab', 'consoleLogsByTab'])
       .then(async (storage) => {
         const wsEventsByTab = storage.wsEventsByTab || {};
         const consoleLogsByTab = storage.consoleLogsByTab || {};
+        delete wsEventsByTab[makeScopedTabKey(tabId, pageOrigin)];
+        delete consoleLogsByTab[makeScopedTabKey(tabId, pageOrigin)];
+        // Backward compatibility: clear old unscoped key as well.
         delete wsEventsByTab[String(tabId)];
         delete consoleLogsByTab[String(tabId)];
         await setStorage({ wsEventsByTab, consoleLogsByTab });

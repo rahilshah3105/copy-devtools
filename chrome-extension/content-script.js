@@ -13,7 +13,11 @@ window.addEventListener('message', (event) => {
             try {
                 chrome.runtime.sendMessage({
                     type: 'websocketEvent',
-                    data: payload.data
+                    data: {
+                        ...payload.data,
+                        pageUrl: window.location.href,
+                        pageOrigin: window.location.origin
+                    }
                 }, () => void chrome.runtime.lastError);
             } catch (e) {
                 if (e.message && String(e.message).includes('Extension context invalidated')) {
@@ -26,7 +30,11 @@ window.addEventListener('message', (event) => {
             try {
                 chrome.runtime.sendMessage({
                     type: 'consoleLogEvent',
-                    data: payload.data
+                    data: {
+                        ...payload.data,
+                        pageUrl: window.location.href,
+                        pageOrigin: window.location.origin
+                    }
                 }, () => void chrome.runtime.lastError);
             } catch (e) {}
         }

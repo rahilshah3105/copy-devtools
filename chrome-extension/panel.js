@@ -40,6 +40,8 @@ console.log = function (...args) {
     let webSocketConnections = []; // Track WebSocket connections
     let consoleLogs = [];
     let tabId = null;
+let inspectedPageUrl = '';
+let inspectedPageOrigin = '';
     let debuggerAttached = false;
 
     // Maximum storage limits for safety
@@ -52,16 +54,68 @@ console.log = function (...args) {
     console.log("✅ Inspected tab ID:", tabId);
     console.log("🔄 Extension ready - capturing network and WebSocket data...");
 
+function extractOrigin(url) {
+    try {
+        return url ? new URL(url).origin : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function isCurrentScopeUrl(url) {
+    if (!inspectedPageOrigin) return true;
+    return extractOrigin(url) === inspectedPageOrigin;
+}
+
+function resetCapturedDataForScope(reason) {
+    networkRequests = [];
+    webSocketMessages = [];
+    consoleLogs = [];
+    updateStats();
+    if (reason) {
+        console.log(`🔄 Reset captured data for current page scope: ${reason}`);
+    }
+}
+
+function refreshInspectedPageContext(callback) {
+    chrome.devtools.inspectedWindow.eval('window.location.href', (href, exceptionInfo) => {
+        if (exceptionInfo) {
+            console.warn('Could not evaluate inspected page URL:', exceptionInfo.value || exceptionInfo.description || exceptionInfo);
+            if (typeof callback === 'function') callback();
+            return;
+        }
+
+        inspectedPageUrl = typeof href === 'string' ? href : '';
+        inspectedPageOrigin = extractOrigin(inspectedPageUrl);
+        console.log(`🌐 Current inspected page: ${inspectedPageUrl || 'unknown'} (${inspectedPageOrigin || 'no-origin'})`);
+
+        if (typeof callback === 'function') callback();
+    });
+}
+
     // Note: We use Network API instead of Debugger API to avoid Chrome's "debugging" popup
     // This captures WebSocket connections (URLs, headers, timing) but not individual message frames
     console.log("📝 Using Network API for non-intrusive capture (no browser popup!)");
 
-    // Load existing network data (including WebSocket connections established before panel opened)
-    loadExistingNetworkData();
+refreshInspectedPageContext(() => {
+        // Load existing network data (including WebSocket connections established before panel opened)
+        loadExistingNetworkData();
 
-    // Load queued WebSocket events captured by background/content-script before panel opened.
-    loadQueuedWebSocketEvents();
-    loadQueuedConsoleEvents();
+        // Load queued WebSocket events captured by background/content-script before panel opened.
+        loadQueuedWebSocketEvents();
+        loadQueuedConsoleEvents();
+    });
+
+if (chrome.devtools && chrome.devtools.network && chrome.devtools.network.onNavigated) {
+    chrome.devtools.network.onNavigated.addListener((newUrl) => {
+        inspectedPageUrl = String(newUrl || '');
+        inspectedPageOrigin = extractOrigin(inspectedPageUrl);
+        resetCapturedDataForScope('onNavigated event');
+        loadExistingNetworkData();
+        loadQueuedWebSocketEvents();
+        loadQueuedConsoleEvents();
+    });
+}
 
     // Capture console logs from DevTools (if available, mostly deprecated)
     if (chrome.devtools && chrome.devtools.console && chrome.devtools.console.onMessageAdded) {
@@ -204,6 +258,11 @@ console.log = function (...args) {
 
                 let wsCount = 0;
                 harLog.entries.forEach((entry) => {
+                    const entryUrl = entry.request?.url || '';
+                    if (!isCurrentScopeUrl(entryUrl)) {
+                        return;
+                    }
+
                     // Check if it's a WebSocket connection
                     const isWebSocket = isLikelyWebSocketRequest(entry);
 
@@ -260,12 +319,18 @@ console.log = function (...args) {
                 if (message.tabId && tabId && message.tabId !== tabId) {
                     return;
                 }
+                if (message.data.pageOrigin && inspectedPageOrigin && message.data.pageOrigin !== inspectedPageOrigin) {
+                    return;
+                }
                 processWebSocketEvent(message.data);
                 return;
             }
 
             if (message && message.type === 'consoleLogEvent' && message.data) {
                 if (message.tabId && tabId && message.tabId !== tabId) {
+                    return;
+                }
+                if (message.data.pageOrigin && inspectedPageOrigin && message.data.pageOrigin !== inspectedPageOrigin) {
                     return;
                 }
                 if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
@@ -294,7 +359,8 @@ console.log = function (...args) {
 
             const response = await chrome.runtime.sendMessage({
                 type: 'getWsEvents',
-                tabId
+                tabId,
+                pageOrigin: inspectedPageOrigin
             });
 
             if (!response || !response.success || !Array.isArray(response.events)) {
@@ -319,7 +385,8 @@ console.log = function (...args) {
 
             const response = await chrome.runtime.sendMessage({
                 type: 'getConsoleEvents',
-                tabId
+                tabId,
+                pageOrigin: inspectedPageOrigin
             });
 
             if (!response || !response.success || !Array.isArray(response.events)) {
@@ -518,7 +585,7 @@ console.log = function (...args) {
         networkRequests = [];
         webSocketMessages = [];
         consoleLogs = [];
-        chrome.runtime.sendMessage({ type: 'clearWsEvents', tabId }, () => {
+        chrome.runtime.sendMessage({ type: 'clearWsEvents', tabId, pageOrigin: inspectedPageOrigin }, () => {
             void chrome.runtime.lastError;
         });
         updateStats();

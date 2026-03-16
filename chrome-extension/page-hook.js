@@ -2,17 +2,191 @@
 (function captureConsole() {
     if (window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__) return;
     window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__ = true;
+    const EMIT_DEDUPE_WINDOW_MS = 5000;
+    const MAX_RECENT_EMITS = 500;
+    const REPEAT_WINDOW_MS = 30000;
+    const MAX_NON_EXTENSION_REPEATS_PER_WINDOW = 2;
+    const FORCE_NON_EXTENSION_ERRORS_TO_INFO = true;
+    const SUPPRESS_NON_EXTENSION_WARN_ERROR = true;
 
-    const emit = (type, args, sourceLoc = '') => {
+    const NOISY_PATTERNS = {
+        suppress: [
+            /\[Cloudflare Turnstile\]\s*Compatibility layer enabled\.?/i,
+            /apple-mobile-web-app-capable.*deprecated/i,
+            /\[Intercom\]\s*Launcher is disabled/i,
+            /\[GSI_LOGGER\]/i,
+            /A matching frame for #repo-content-turbo-frame was missing from the response, transforming into full-page Visit\.?/i
+        ],
+        downgradeToInfo: [
+            /\[MCP\]\s*Unified registry fetch succeeded but returned 0 servers/i,
+            /^\[Violation\].*setTimeout.*\d+ms/i,
+            /^\[Violation\].*longtask.*\d+ms/i
+        ]
+    };
+
+    const ACTIONABLE_ERROR_PATTERNS = [
+        /uncaught/i,
+        /unhandled/i,
+        /typeerror/i,
+        /referenceerror/i,
+        /syntaxerror/i,
+        /securityerror/i,
+        /failed to fetch/i,
+        /network request failed/i,
+        /cannot read/i,
+        /is not a function/i,
+        /permission denied/i,
+        /csp|content security policy/i,
+        /ERR_[A-Z_]+/
+    ];
+
+    const recentEmits = new Map();
+    const repeatCounter = new Map();
+
+    const safeStringify = (value) => {
+        if (value instanceof Error) return value.stack || value.message || String(value);
+        if (typeof value === 'string') return value;
+        if (value === null || typeof value !== 'object') return String(value);
+
+        const seen = new WeakSet();
         try {
+            return JSON.stringify(value, (key, current) => {
+                if (typeof current === 'object' && current !== null) {
+                    if (seen.has(current)) return '[Circular]';
+                    seen.add(current);
+                }
+                return current;
+            });
+        } catch (_) {
+            return String(value);
+        }
+    };
+
+    const shouldSuppress = (message) => NOISY_PATTERNS.suppress.some((pattern) => pattern.test(message));
+    const shouldDowngrade = (message) => NOISY_PATTERNS.downgradeToInfo.some((pattern) => pattern.test(message));
+
+    const getScriptOriginType = (sourceUrl) => {
+        if (!sourceUrl) return 'unknown';
+        if (sourceUrl.startsWith('chrome-extension://')) return 'extension';
+
+        try {
+            const source = new URL(sourceUrl);
+            const current = window.location;
+            if (source.origin === current.origin) return 'first-party';
+            if (source.hostname === current.hostname) return 'first-party';
+            if (source.hostname.endsWith(`.${current.hostname}`) || current.hostname.endsWith(`.${source.hostname}`)) {
+                return 'first-party';
+            }
+            return 'third-party';
+        } catch (_) {
+            return 'unknown';
+        }
+    };
+
+    const isLikelyActionable = (message) => ACTIONABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+
+    const shouldSkipDuplicate = (level, text, sourceLoc, sourceUrl) => {
+        const now = Date.now();
+        const key = `${level}|${text}|${sourceLoc}|${sourceUrl || ''}`;
+        const lastSeen = recentEmits.get(key);
+
+        recentEmits.set(key, now);
+        if (recentEmits.size > MAX_RECENT_EMITS) {
+            for (const [cachedKey, timestamp] of recentEmits) {
+                if (now - timestamp > EMIT_DEDUPE_WINDOW_MS) {
+                    recentEmits.delete(cachedKey);
+                }
+                if (recentEmits.size <= MAX_RECENT_EMITS) break;
+            }
+        }
+
+        return typeof lastSeen === 'number' && (now - lastSeen) < EMIT_DEDUPE_WINDOW_MS;
+    };
+
+    const shouldThrottleByRepeat = (level, text, originType) => {
+        // Keep extension-level diagnostics intact.
+        if (originType === 'extension') return false;
+        if (level !== 'error' && level !== 'warn') return false;
+
+        const now = Date.now();
+        const normalizedText = String(text || '')
+            .replace(/https?:\/\/\S+/g, '[url]')
+            .replace(/\b\d+\b/g, '[n]')
+            .trim();
+        const key = `${originType}|${level}|${normalizedText}`;
+        const record = repeatCounter.get(key);
+
+        if (!record || (now - record.startTs) > REPEAT_WINDOW_MS) {
+            repeatCounter.set(key, { count: 1, startTs: now });
+            return false;
+        }
+
+        record.count += 1;
+        if (record.count > MAX_NON_EXTENSION_REPEATS_PER_WINDOW) {
+            return true;
+        }
+
+        return false;
+    };
+
+    const getCallerDetails = (stack) => {
+        const details = { display: '', url: '' };
+        if (!stack) return details;
+
+        const lines = stack.split('\n');
+        if (lines.length <= 2) return details;
+
+        const stackLine = lines[2];
+        const urlMatch = stackLine.match(/((?:https?|chrome-extension):\/\/[^\s)]+)/);
+        if (!urlMatch) return details;
+
+        details.url = urlMatch[1];
+        try {
+            const parsed = new URL(details.url);
+            const fileName = parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname;
+            const lineMatch = details.url.match(/:(\d+)(?::\d+)?$/);
+            details.display = lineMatch ? `${fileName}:${lineMatch[1]}` : fileName;
+        } catch (_) {
+            details.display = details.url;
+        }
+
+        return details;
+    };
+
+    const emit = (type, args, sourceLoc = '', sourceUrl = '') => {
+        try {
+            const text = args.map(safeStringify).join(' ');
+            if (shouldSuppress(text)) return;
+
+            const originType = getScriptOriginType(sourceUrl);
+
+            if (SUPPRESS_NON_EXTENSION_WARN_ERROR && (type === 'error' || type === 'warn') && originType !== 'extension') {
+                return;
+            }
+
+            let level = (
+                shouldDowngrade(text) ||
+                ((type === 'error' || type === 'warn') && originType === 'third-party' && !isLikelyActionable(text))
+            ) ? 'info' : type;
+
+            if (FORCE_NON_EXTENSION_ERRORS_TO_INFO && (type === 'error' || type === 'warn') && originType !== 'extension') {
+                level = 'info';
+            }
+
+            if (shouldThrottleByRepeat(type, text, originType)) return;
+
+            if (shouldSkipDuplicate(level, text, sourceLoc, sourceUrl)) return;
+
             window.postMessage({
                 source: 'DEVTOOLS_CONSOLE_HOOK',
                 data: {
-                    level: type,
-                    text: args.map(a => typeof a === 'object' ? (a instanceof Error ? a.stack : JSON.stringify(a)) : String(a)).join(' '),
+                    level,
+                    text,
                     source: 'console',
                     url: window.location.href,
                     line: sourceLoc,
+                    sourceUrl,
+                    originType,
                     timestamp: new Date().toISOString()
                 }
             }, '*');
@@ -23,29 +197,21 @@
         const orig = console[level];
         console[level] = function(...args) {
             let callerInfo = '';
+            let callerUrl = '';
             try {
                 throw new Error();
             } catch (err) {
-                if (err.stack) {
-                    const lines = err.stack.split('\n');
-                    if (lines.length > 2) {
-                        const match = lines[2].match(/(?:https?:\/\/[^:]+|)\/([^\/]+):(\d+):/);
-                        if (match) {
-                            callerInfo = `${match[1]}:${match[2]}`;
-                        } else {
-                            const fullMatch = lines[2].match(/(https?:\/\/[^:]+:\d+:\d+)/);
-                            if (fullMatch) callerInfo = fullMatch[1];
-                        }
-                    }
-                }
+                const callerDetails = getCallerDetails(err.stack);
+                callerInfo = callerDetails.display;
+                callerUrl = callerDetails.url;
             }
-            emit(level, args, callerInfo);
+            emit(level, args, callerInfo, callerUrl);
             return orig.apply(this, args);
         };
     });
 
     window.addEventListener('error', (e) => {
-        emit('error', [e.message || String(e)], e.filename ? `${e.filename}:${e.lineno}` : '');
+        emit('error', [e.message || String(e)], e.filename ? `${e.filename}:${e.lineno}` : '', e.filename || '');
     });
 
     try {
