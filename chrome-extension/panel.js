@@ -13,18 +13,40 @@ function logToUI(msg, isError = false) {
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
+const STRICT_PROD_MODE = true;
+
+function safeDebugString(value) {
+    if (typeof value === 'string') return value;
+    if (value === null || typeof value !== 'object') return String(value);
+    try {
+        return JSON.stringify(value);
+    } catch (_) {
+        return String(value);
+    }
+}
+
+function callConsoleSafe(fn, args) {
+    try {
+        if (typeof fn === 'function') {
+            return Function.prototype.apply.call(fn, console, args);
+        }
+    } catch (_) {
+        // Ignore; panel debug logging should never crash user-facing functionality.
+    }
+    return undefined;
+}
 
 console.log = function (...args) {
-        originalLog.apply(console, args);
-        logToUI(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    callConsoleSafe(originalLog, args);
+    logToUI(args.map((a) => safeDebugString(a)).join(' '));
     };
     console.warn = function (...args) {
-        originalWarn.apply(console, args);
-        logToUI('WARN: ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '), true);
+        callConsoleSafe(originalWarn, args);
+        logToUI('WARN: ' + args.map((a) => safeDebugString(a)).join(' '), true);
     };
     console.error = function (...args) {
-        originalError.apply(console, args);
-        logToUI('ERROR: ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '), true);
+        callConsoleSafe(originalError, args);
+        logToUI('ERROR: ' + args.map((a) => safeDebugString(a)).join(' '), true);
     };
 
     document.getElementById('clearDebugBtn')?.addEventListener('click', () => {
@@ -48,6 +70,37 @@ let inspectedPageOrigin = '';
     const MAX_REQUESTS = 10000;
     const MAX_WS_MESSAGES = 5000;
     const MAX_CONSOLE_LOGS = 10000;
+
+const ERROR_LIKE_LOG_PATTERNS = [
+    /failed to fetch/i,
+    /request error/i,
+    /network error/i,
+    /typeerror/i,
+    /referenceerror/i,
+    /cannot read properties of/i,
+    /exception/i,
+    /decryption failed/i,
+    /blockeddomainsstore/i
+];
+
+function shouldDropSiteConsoleEntry(level, source, text, originType) {
+    if (!STRICT_PROD_MODE) return false;
+
+    const lvl = String(level || 'log').toLowerCase();
+    const src = String(source || '').toLowerCase();
+    const txt = String(text || '');
+    const origin = String(originType || '').toLowerCase();
+
+    if ((lvl === 'error' || lvl === 'warn') && src !== 'extension' && origin !== 'extension') {
+        return true;
+    }
+
+    if (lvl === 'log' && src !== 'extension' && origin !== 'extension' && ERROR_LIKE_LOG_PATTERNS.some((pattern) => pattern.test(txt))) {
+        return true;
+    }
+
+    return false;
+}
 
     // Get the inspected tab ID (it's a direct property, not via eval)
     tabId = chrome.devtools.inspectedWindow.tabId;
@@ -120,11 +173,14 @@ if (chrome.devtools && chrome.devtools.network && chrome.devtools.network.onNavi
     // Capture console logs from DevTools (if available, mostly deprecated)
     if (chrome.devtools && chrome.devtools.console && chrome.devtools.console.onMessageAdded) {
         chrome.devtools.console.onMessageAdded.addListener((message) => {
+            const lvl = (message.level || 'log').toLowerCase();
+            if (shouldDropSiteConsoleEntry(lvl, message.source || 'console', message.text || '', '')) return;
+
             if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
                 consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
             }
             consoleLogs.push({
-                level: message.level || 'log',
+                level: lvl,
                 text: message.text || '',
                 source: message.source || 'console',
                 url: message.url || '',
@@ -333,11 +389,15 @@ if (chrome.devtools && chrome.devtools.network && chrome.devtools.network.onNavi
                 if (message.data.pageOrigin && inspectedPageOrigin && message.data.pageOrigin !== inspectedPageOrigin) {
                     return;
                 }
+                // Suppress any site warn/error that slipped through the hook
+                const evtLevel = (message.data.level || 'log').toLowerCase();
+                const evtOrigin = message.data.originType || '';
+                if (shouldDropSiteConsoleEntry(evtLevel, message.data.source || 'console', message.data.text || '', evtOrigin)) return;
                 if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
                     consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
                 }
                 consoleLogs.push({
-                    level: message.data.level || 'log',
+                    level: evtLevel,
                     text: message.data.text || '',
                     source: message.data.source || 'console',
                     url: message.data.url || window.location.href,
@@ -394,6 +454,10 @@ if (chrome.devtools && chrome.devtools.network && chrome.devtools.network.onNavi
             }
 
             response.events.forEach((event) => {
+                const queuedLevel = event.level || 'log';
+                if (shouldDropSiteConsoleEntry(queuedLevel, event.source || 'console', event.text || '', event.originType || '')) {
+                    return;
+                }
                 if (consoleLogs.length >= MAX_CONSOLE_LOGS) {
                     consoleLogs = consoleLogs.slice(-Math.floor(MAX_CONSOLE_LOGS * 0.8));
                 }

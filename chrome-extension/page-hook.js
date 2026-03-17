@@ -2,12 +2,15 @@
 (function captureConsole() {
     if (window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__) return;
     window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__ = true;
+    const STRICT_PROD_MODE = true;
     const EMIT_DEDUPE_WINDOW_MS = 5000;
     const MAX_RECENT_EMITS = 500;
     const REPEAT_WINDOW_MS = 30000;
     const MAX_NON_EXTENSION_REPEATS_PER_WINDOW = 2;
-    const FORCE_NON_EXTENSION_ERRORS_TO_INFO = true;
-    const SUPPRESS_NON_EXTENSION_WARN_ERROR = true;
+    const FORCE_NON_EXTENSION_ERRORS_TO_INFO = STRICT_PROD_MODE;
+    const SUPPRESS_NON_EXTENSION_WARN_ERROR = STRICT_PROD_MODE;
+    const SUPPRESS_NON_EXTENSION_ERROR_LIKE_LOG = STRICT_PROD_MODE;
+    const MUTE_NON_EXTENSION_CONSOLE_OUTPUT = STRICT_PROD_MODE;
 
     const NOISY_PATTERNS = {
         suppress: [
@@ -38,6 +41,18 @@
         /permission denied/i,
         /csp|content security policy/i,
         /ERR_[A-Z_]+/
+    ];
+
+    const ERROR_LIKE_LOG_PATTERNS = [
+        /failed to fetch/i,
+        /request error/i,
+        /network error/i,
+        /typeerror/i,
+        /referenceerror/i,
+        /cannot read properties of/i,
+        /exception/i,
+        /decryption failed/i,
+        /blockeddomainsstore/i
     ];
 
     const recentEmits = new Map();
@@ -84,6 +99,17 @@
     };
 
     const isLikelyActionable = (message) => ACTIONABLE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+
+    const callOriginalConsole = (fn, args, thisArg) => {
+        try {
+            if (typeof fn === 'function') {
+                return Function.prototype.apply.call(fn, thisArg || console, args);
+            }
+        } catch (_) {
+            // Swallow to avoid breaking page execution when console methods are patched oddly by sites/extensions.
+        }
+        return undefined;
+    };
 
     const shouldSkipDuplicate = (level, text, sourceLoc, sourceUrl) => {
         const now = Date.now();
@@ -134,23 +160,33 @@
         if (!stack) return details;
 
         const lines = stack.split('\n');
-        if (lines.length <= 2) return details;
 
-        const stackLine = lines[2];
-        const urlMatch = stackLine.match(/((?:https?|chrome-extension):\/\/[^\s)]+)/);
-        if (!urlMatch) return details;
+        // Scan every stack frame starting from line 1 (skip the bare "Error" line).
+        // We skip chrome-extension:// frames — those belong to our own hook or to
+        // other extensions (e.g. React DevTools installHook.js) that wrap console
+        // methods between us and the real site caller.  The first https?:// URL we
+        // encounter is the actual originating script.
+        for (let i = 1; i < lines.length; i++) {
+            const urlMatch = lines[i].match(/((?:https?|chrome-extension):\/\/[^\s)]+)/);
+            if (!urlMatch) continue;
 
-        details.url = urlMatch[1];
-        try {
-            const parsed = new URL(details.url);
-            const fileName = parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname;
-            const lineMatch = details.url.match(/:(\d+)(?::\d+)?$/);
-            details.display = lineMatch ? `${fileName}:${lineMatch[1]}` : fileName;
-        } catch (_) {
-            details.display = details.url;
+            const candidateUrl = urlMatch[1];
+            if (candidateUrl.startsWith('chrome-extension://')) continue; // skip extension frames
+
+            details.url = candidateUrl;
+            try {
+                const parsed = new URL(candidateUrl);
+                const fileName = parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname;
+                const lineMatch = candidateUrl.match(/:(\d+)(?::\d+)?$/);
+                details.display = lineMatch ? `${fileName}:${lineMatch[1]}` : fileName;
+            } catch (_) {
+                details.display = candidateUrl;
+            }
+            return details;
         }
 
-        return details;
+        // No site URL found in stack — all frames were extension code.
+        return details; // url = '' → getScriptOriginType('') → 'unknown' → suppressed
     };
 
     const emit = (type, args, sourceLoc = '', sourceUrl = '') => {
@@ -161,6 +197,16 @@
             const originType = getScriptOriginType(sourceUrl);
 
             if (SUPPRESS_NON_EXTENSION_WARN_ERROR && (type === 'error' || type === 'warn') && originType !== 'extension') {
+                // 'unknown' origin means no caller URL was resolved — treat as non-extension noise
+                return;
+            }
+
+            if (
+                SUPPRESS_NON_EXTENSION_ERROR_LIKE_LOG &&
+                type === 'log' &&
+                originType !== 'extension' &&
+                ERROR_LIKE_LOG_PATTERNS.some((pattern) => pattern.test(text))
+            ) {
                 return;
             }
 
@@ -196,6 +242,9 @@
     ['log', 'warn', 'error', 'info', 'debug'].forEach(level => {
         const orig = console[level];
         console[level] = function(...args) {
+            // For warn/error: resolve caller origin first so we can bail out
+            // immediately without touching any other logic if it is a site event.
+            // For log/info/debug: still resolve so metadata is accurate in the panel.
             let callerInfo = '';
             let callerUrl = '';
             try {
@@ -205,13 +254,33 @@
                 callerInfo = callerDetails.display;
                 callerUrl = callerDetails.url;
             }
+
+            const originType = getScriptOriginType(callerUrl);
+
+            // In strict production mode, fully mute non-extension noise from native browser console.
+            if (MUTE_NON_EXTENSION_CONSOLE_OUTPUT && originType !== 'extension') {
+                if (SUPPRESS_NON_EXTENSION_WARN_ERROR && (level === 'error' || level === 'warn')) {
+                    return undefined;
+                }
+
+                if (SUPPRESS_NON_EXTENSION_ERROR_LIKE_LOG && level === 'log') {
+                    const text = args.map(safeStringify).join(' ');
+                    if (ERROR_LIKE_LOG_PATTERNS.some((pattern) => pattern.test(text))) {
+                        return undefined;
+                    }
+                }
+            }
+
             emit(level, args, callerInfo, callerUrl);
-            return orig.apply(this, args);
+            return callOriginalConsole(orig, args, this);
         };
     });
 
     window.addEventListener('error', (e) => {
-        emit('error', [e.message || String(e)], e.filename ? `${e.filename}:${e.lineno}` : '', e.filename || '');
+        const errFile = e.filename || '';
+        // Only forward errors originating from extension scripts, not from any page/site script
+        if (!errFile.startsWith('chrome-extension://')) return;
+        emit('error', [e.message || String(e)], errFile ? `${errFile}:${e.lineno}` : '', errFile);
     });
 
     try {
