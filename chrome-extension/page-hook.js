@@ -2,7 +2,7 @@
 (function captureConsole() {
     if (window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__) return;
     window.__DEVTOOLS_CONSOLE_HOOK_INSTALLED__ = true;
-    const STRICT_PROD_MODE = true;
+    const STRICT_PROD_MODE = false;
     const EMIT_DEDUPE_WINDOW_MS = 5000;
     const MAX_RECENT_EMITS = 500;
     const REPEAT_WINDOW_MS = 30000;

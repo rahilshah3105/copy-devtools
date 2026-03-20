@@ -13,7 +13,7 @@ function logToUI(msg, isError = false) {
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
-const STRICT_PROD_MODE = true;
+const STRICT_PROD_MODE = false;
 
 function safeDebugString(value) {
     if (typeof value === 'string') return value;
